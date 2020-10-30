@@ -22,6 +22,14 @@ class Logs:
 csv_file = 'CHANGE IT'
 ap_ = 'CHANGE IT'
 
+
+def convert_git_time(time):
+    try:
+        return datetime.strptime(time.split(',')[0], '%Y-%m-%d %H:%M:%S %z').strftime('%d.%m.%Y')
+    except:
+        return datetime.strptime(time.split(',')[0], '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y')
+
+
 if __name__ == '__main__':
     all_logs: [Logs] = []
     # for p in Path('./logs').iterdir():
@@ -29,7 +37,7 @@ if __name__ == '__main__':
     #        with open(p) as file:
     #            lines = file.readlines()
     #           logs = list(
-    #                map(lambda l: Logs(datetime.strptime(l.split(',')[0], '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y'),
+    #                map(lambda l: Logs(convert_git_time(l),
     #                                   ', '.join(l.split(',')[1:]).strip()), lines))
     #            all_logs.extend(logs)
     exports = []
@@ -58,15 +66,19 @@ if __name__ == '__main__':
 
     from AppKit import NSWorkspace
 
+    cn = 1
     keyboard = Controller()
     activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
     while 'Microsoft Excel' not in activeAppName:
         keyboard.press(Key.cmd)
-        keyboard.press(Key.tab)
+        for i in range(0, cn):
+            keyboard.press(Key.tab)
+            time.sleep(.1)
+            keyboard.release(Key.tab)
         keyboard.release(Key.cmd)
-        keyboard.release(Key.tab)
-        time.sleep(.5)
+        time.sleep(0.5)
         activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
+        cn = cn + 1
     from AppKit import NSPasteboard, NSStringPboardType
 
     time.sleep(2)
