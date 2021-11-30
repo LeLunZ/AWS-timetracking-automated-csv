@@ -348,7 +348,8 @@ def validate_export(use_git_logs):
         with open('unused-logs.json', 'w') as f:
             json.dump(export_logs, f)
 
-    with open(f'{str(user).replace(" ", "_")}_timesheet_{start_date_time.strftime("%m_%Y")}_to_{end_date_time.strftime("%m_%Y")}.csv', 'w') as csv_file:
+    f_name = f'{str(user).replace(" ", "_")}_timesheet_{start_date_time.strftime("%m_%Y")}_to_{end_date_time.strftime("%m_%Y")}.csv'
+    with open(f_name, 'w') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(
             ['Weekday', 'Date', 'Check In Time', 'Check Out Time', 'Work Time', 'Work Package', 'Remark', 'Generated',
@@ -376,6 +377,7 @@ def validate_export(use_git_logs):
                          t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60, ap_,
                          t.remark,
                          '*' if t.is_generated else '', ''])
+    print(f'file exported to {f_name}')
     return
 
 
