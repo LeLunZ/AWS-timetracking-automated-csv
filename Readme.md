@@ -1,4 +1,4 @@
-# AWS Timetracking Automation from csv
+# Timetracking Automation from csv
 
 ## Setup
 
