@@ -22,4 +22,4 @@ Then just start the application!
 ## Adding Git logs
 
 just run this in all your repositories. Save all the logs in one folder  
-`git log --all --pretty=format:'%ai,%s' > log.csv`
+`git log --all --pretty=format:'%ai,%s' --author=GitName > log.csv`

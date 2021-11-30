@@ -1,9 +1,73 @@
+import json
+import pickle
+import random
 import time
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Set, Dict
+
 from pynput.keyboard import Controller, Key
 import csv
 from datetime import datetime, timedelta
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
+
+allg_feiertage = []
+
+months = {
+    'Jan': 1,
+    'Feb': 2,
+    'Mär': 3,
+    'Apr': 4,
+    'Mai': 5,
+    'Jun': 6,
+    'Jul': 7,
+    'Aug': 8,
+    'Sep': 9,
+    'Okt': 10,
+    'Nov': 11,
+    'Dez': 12
+}
+
+
+def load_allg_feiertage():
+    years = set([start_date_time.date().year + i for i in range(end_date_time.date().year - start_date_time.date().year + 1)])
+
+    global allg_feiertage
+    feier_f = Path('feiertage.pickle')
+    if feier_f.is_file():
+        with open(feier_f, 'rb') as f:
+            allg_feiertage = pickle.load(f)
+        distinct_years = set([f.year for f in allg_feiertage])
+        if years == distinct_years:
+            return
+
+    driver = webdriver.Chrome('./chromedriver')
+    for year in years:
+        driver.get('https://www.timeanddate.de/feiertage/oesterreich/' + str(year))
+        WebDriverWait(driver, 7).until(EC.presence_of_element_located((By.XPATH, '//*/tbody')))
+        try:
+            cookie_ok = driver.find_element(By.XPATH,
+                                            "//*/button[contains(@class, 'fc-button') and contains(@class, 'fc-cta-consent') and contains(@class,'fc-primary-button')]")
+
+            cookie_ok.click()
+        except EC.NoSuchElementException:
+            pass
+        elements = driver.find_elements(By.XPATH, "//*/tbody/tr[@class='showrow']/th")
+
+        for f in elements:
+            f_split = f.text.split(' ')
+            day = int(f_split[0].replace('.', ''))
+            month = f_split[1]
+            year = year
+            allg_feiertage.append(datetime(year, months[month], day).date())
+    with open(feier_f, 'wb') as f:
+        pickle.dump(allg_feiertage, f)
+    driver.quit()
 
 
 @dataclass
@@ -11,58 +75,265 @@ class ExportTime:
     in_time: datetime
     out_time: datetime
     remark: str
+    is_generated: bool = False
+
+
+class ExportDay:
+    def __init__(self, day):
+        self.times = []
+        self.day: datetime = day
+        self.work_hours = 0  # in seconds
+        self.valid: bool = True
+        self.validation_str = []
+
+    def add_times(self, e_time: ExportTime):
+        self.times.append(e_time)
+
+        self.work_hours += (e_time.out_time - e_time.in_time).total_seconds()
+
+    def add_validation(self, text):
+        self.valid = False
+        self.validation_str.append(text)
 
 
 @dataclass
 class Logs:
-    date: str
-    remark: str
+    date: datetime
+    remarks: str
 
 
-csv_file = 'CHANGE IT'
-ap_ = 'CHANGE IT'
-
-
-def convert_git_time(time):
+def convert_git_time(git_time):
     try:
-        return datetime.strptime(time.split(',')[0], '%Y-%m-%d %H:%M:%S %z').strftime('%d.%m.%Y')
+        return datetime.strptime(git_time.split(',')[0], '%Y-%m-%d %H:%M:%S %z')
     except:
-        return datetime.strptime(time.split(',')[0], '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y')
+        return datetime.strptime(git_time.split(',')[0], '%Y-%m-%d %H:%M:%S')
 
 
-if __name__ == '__main__':
-    all_logs: [Logs] = []
-    # for p in Path('./logs').iterdir():
-    #    if p.is_file():
-    #        with open(p) as file:
-    #            lines = file.readlines()
-    #           logs = list(
-    #                map(lambda l: Logs(convert_git_time(l),
-    #                                   ', '.join(l.split(',')[1:]).strip()), lines))
-    #            all_logs.extend(logs)
-    exports = []
-    with open(csv_file) as csvfile:
-        reader = csv.reader(csvfile, delimiter=',', quotechar='"')
-        next(reader, None)
-        for in_action in reader:
-            in_time = datetime.strptime(in_action[3], '%m-%d-%Y %H:%M:%S')
-            remark_in = in_action[6]
-            out_action = next(reader)
-            out_time = datetime.strptime(out_action[3], '%m-%d-%Y %H:%M:%S')
-            remark_out = out_action[6]
-            if remark_out != '':
-                remark = ', '.join([remark_in.strip(', \n\r"'), remark_out.strip(', \n\r"')])
+all_logs = {}
+
+
+def prepare_logs():
+    for p in Path('./logs').iterdir():
+        if p.is_file():
+            with open(p) as file:
+                lines = file.readlines()
+                logs = list(
+                    map(lambda l: Logs(convert_git_time(l),
+                                       ', '.join(l.split(',')[1:]).strip()), lines))
+                for l in logs:
+                    key = l.date.date()
+                    if key not in all_logs:
+                        all_logs[key] = [l.remarks]
+                    elif l.remarks not in all_logs[key]:
+                        all_logs[key].append(l.remarks)
+                    else:
+                        date_r = l.date
+                        while key not in all_logs and date_r.year == 2020:
+                            date_r = date_r + timedelta(days=1)
+                            key = date_r.strftime('%d.%m.%Y')
+                        all_logs[key].append(l.remarks)
+
+    export = {k.strftime("%d.%m.%Y"): all_logs[k] for k in all_logs}
+    with open('log.json', 'w') as f:
+        json.dump(export, f)
+
+
+export_days = {}
+user = None
+
+
+def add_export_time(day: datetime, e_time: ExportTime):
+    day = day.date()
+    if day in export_days:
+        export_days[day].add_times(e_time)
+    else:
+        export_days[day] = ExportDay(day)
+        export_days[day].add_times(e_time)
+
+
+def get_export_time(day):
+    try:
+        return export_days[day]
+    except KeyError:
+        return None
+
+
+def remove_export_time(day):
+    return export_days.pop(day, None)
+
+
+@dataclass
+class WorkTimes:
+    begin: List = field(default_factory=lambda: [])
+    end: List = field(default_factory=lambda: [])
+
+
+def read_time_sheet():
+    global user
+    time_sheet_file = input('Timesheet: ')
+    time_sheet_data = []
+    with open(time_sheet_file, 'r') as time_sheet:
+        time_sheet.readline()  # Unused
+        time_sheet.readline()  # Unused
+        user = time_sheet.readline().removeprefix('Generated by ').strip()  # Name
+        time_sheet.readline()  # Unused
+        time_sheet.readline()  # Empty
+        time_sheet.readline()  # Empty
+        csv_time_sheet = csv.reader(time_sheet, quotechar='"', skipinitialspace=True)
+        header: List = [h.strip() for h in next(csv_time_sheet)]  # Header
+
+        action = header.index('Action Type')
+        timestamp = header.index('Timestamp')
+        remark = header.index('Remark')
+
+        # in action is first in csv. And in for we always skip one line.
+        for in_action in csv_time_sheet:
+            if len(in_action) == 0:
+                break
+            in_time = datetime.strptime(in_action[timestamp], '%m-%d-%Y %I:%M %p')
+            remark_in = in_action[remark]
+            out_action = next(csv_time_sheet)  # get next line
+            out_time = datetime.strptime(out_action[timestamp], '%m-%d-%Y %I:%M %p')
+            remark_out = out_action[remark]
+
+            if remark_out != '' != remark_in and remark_out != remark_in:
+                remark_str = ', '.join([remark_in.strip(', \n\r"'), remark_out.strip(', \n\r"')])
+            elif remark_out != '':
+                remark_str = remark_out.strip(', \n\r"')
+            elif remark_in != '':
+                remark_str = remark_in.strip(', \n\r"')
             else:
-                remark = remark_in.strip(', \n\r"')
+                remark_str = ''
             if (out_time - in_time).seconds >= (6 * 60 * 60):
                 hour_before = out_time.hour
                 out_time = out_time.replace(hour=in_time.hour + 4)
-                exports.append(ExportTime(in_time, out_time, remark))
+                time_sheet_data.append(ExportTime(in_time, out_time, remark_str))
+                add_export_time(in_time, time_sheet_data[-1])
                 new_in_time = out_time + timedelta(minutes=30)
                 new_out_time = out_time.replace(hour=hour_before) + timedelta(minutes=30)
-                exports.append(ExportTime(new_in_time, new_out_time, remark))
+                time_sheet_data.append(ExportTime(new_in_time, new_out_time, remark_str))
+                add_export_time(in_time, time_sheet_data[-1])
             else:
-                exports.append(ExportTime(in_time, out_time, remark))
+                time_sheet_data.append(ExportTime(in_time, out_time, remark_str))
+                add_export_time(in_time, time_sheet_data[-1])
+
+    return time_sheet_data
+
+
+def validate_export(use_git_logs):
+    days = ['MO', 'DI', 'MI', 'DO', 'FR', 'SA', 'SO']
+
+    week_end_date = (start_date_time + timedelta(days=6 - start_date_time.weekday())).date()
+    week_start_date = start_date_time.date()
+
+    all_exports = []
+    overdue = []
+    for export_date in [week_start_date + timedelta(days=x) for x in
+                        range(1 + (end_date_time.date() - week_start_date).days)]:
+        export = get_export_time(export_date)
+        if export is not None:
+            if export_date in allg_feiertage or export_date.weekday() == 6:
+                exp = remove_export_time(export_date)
+                exp.add_validation(f'Moved from {export_date}, Sonntag or Feiertag!!!')
+                overdue.append(exp)
+    overdue.reverse()
+
+    while week_end_date <= end_date_time.date():
+        work_hours = 0
+        for export_date in [week_start_date + timedelta(days=x) for x in
+                            range(1 + (week_end_date - week_start_date).days)]:
+            export: ExportDay = get_export_time(export_date)
+            if export is not None:
+                if export.work_hours > 10 * 60 * 60:
+                    export.valid = False
+                    export.add_validation(f'Too Many Work Hours {export.work_hours / 60 / 60}')
+                work_hours += export.work_hours
+                all_exports.append(export)
+                if export_date.weekday() == 5:
+                    all_exports[-1].add_validation('Samstag?!')
+            else:
+                if export_date not in allg_feiertage and export_date.weekday() != 5 and export_date.weekday() != 6:
+                    if len(overdue) != 0:
+                        day = overdue.pop()
+                        day.day = export_date
+                        if day.work_hours > 10 * 60 * 60:
+                            day.valid = False
+                            day.add_validation(f'Too Many Work Hours {day.work_hours / 60 / 60}')
+                    else:
+                        day = ExportDay(export_date)
+                        begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=8,
+                                         minute=30)
+                        end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=12,
+                                       minute=00)
+                        day.add_times(ExportTime(begin, end, '', True))
+                        begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=12,
+                                         minute=30)
+                        end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=16,
+                                       minute=45)
+                        day.add_times(ExportTime(begin, end, '', True))
+                    work_hours += day.work_hours
+                    all_exports.append(day)
+        if work_hours > weekly_hours * 60 * 60:
+            all_exports[-1].add_validation(f'{work_hours / 60 / 60} hours worked in the week')
+        week_start_date = week_end_date + timedelta(days=1)
+        if week_end_date + timedelta(days=7) > end_date_time.date() and week_end_date != end_date_time.date():
+            week_end_date = end_date_time.date()
+        else:
+            week_end_date = week_end_date + timedelta(days=7)
+
+
+    if use_git_logs:
+        for e in all_exports:
+            if e.day in all_logs:
+                empty_remark = [t for t in e.times if t.remark == '']
+                all_e = [t for t in e.times]
+                for l in all_logs[e.day]:
+                    if len(empty_remark) > 0:
+                        r = empty_remark.pop()
+                        r.remark = l
+                    else:
+                        r = all_e.pop()
+                        all_e.append(r)
+                        r.remark += f', {l}'
+                del all_logs[e.day]
+
+        export_logs = {k.strftime("%d.%m.%Y"): all_logs[k] for k in all_logs}
+        with open('unused-logs.json', 'w') as f:
+            json.dump(export_logs, f)
+
+    with open(f'{user}_timesheet.csv', 'w') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(
+            ['Weekday', 'Date', 'Check In Time', 'Check Out Time', 'Work Time', 'Work Package', 'Remark', 'Generated',
+             'Validation'])
+        for e_day in all_exports:
+            for t in e_day.times[:-1]:
+                csv_writer.writerow(
+                    [days[e_day.day.weekday()], e_day.day.strftime('%d.%m.%Y'), t.in_time.strftime('%H:%M'),
+                     t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60, ap_, t.remark,
+                     '*' if t.is_generated else '', ''])
+            t: ExportTime = e_day.times[-1]
+            csv_writer.writerow([days[e_day.day.weekday()], e_day.day.strftime('%d.%m.%Y'), t.in_time.strftime('%H:%M'),
+                                 t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60, ap_,
+                                 t.remark, '*' if t.is_generated else ''] + (
+                                    [''] if e_day.valid else e_day.validation_str))
+        if len(overdue) != 0:
+            csv_writer.writerow([])
+            csv_writer.writerow([])
+            csv_writer.writerow([])
+            csv_writer.writerow(['Worktimes from Sunday and public Holidays'])
+            for e_day in overdue:
+                for t in e_day.times:
+                    csv_writer.writerow(
+                        [days[e_day.day.weekday()], e_day.day.strftime('%d.%m.%Y'), t.in_time.strftime('%H:%M'),
+                         t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60, ap_,
+                         t.remark,
+                         '*' if t.is_generated else '', ''])
+    return
+
+
+def export_to_aws_csv():
+    raise NotImplementedError('TODO implement conversion from all_logs to export strs')
 
     from AppKit import NSWorkspace
 
@@ -128,29 +399,41 @@ if __name__ == '__main__':
     if pbstring != '':
         keyboard.press(Key.right)
 
-    for export in exports:
+
+    export_strs = [] # TODO implement conversion from all_logs to export strs
+    for entries in all_logs:
         activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
         while activeAppName != 'Microsoft Excel':
             time.sleep(2)
             activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
-        protocol_date = export.in_time.strftime("%d.%m.%Y")
-        keyboard.type(protocol_date)
-        keyboard.press(Key.tab)
-        keyboard.type(export.in_time.strftime("%H"))
-        keyboard.press(Key.tab)
-        keyboard.type(export.in_time.strftime("%M"))
-        keyboard.press(Key.tab)
-        keyboard.type(export.out_time.strftime("%H"))
-        keyboard.press(Key.tab)
-        keyboard.type(export.out_time.strftime("%M"))
-        keyboard.press(Key.tab)
-        keyboard.type(ap_)
-        keyboard.press(Key.tab)
-        # git_remarks = list(map(lambda l: l.remark, filter(lambda l: l.date == protocol_date, all_logs)))
-        # git_remarks.insert(0, export.remark)
-        # export.remark = ', '.join(git_remarks)
-        export.remark = export.remark.strip(', \n\r"')
-        keyboard.type(export.remark)
+
+        for i in entries[:-1]:
+            keyboard.type(str(i))
+            keyboard.press(Key.tab)
+
+        remark = ','.join(entries[-1])
+        keyboard.type(remark)
         keyboard.press(Key.tab)
 
+def export_to_csv():
+    time_tracking_row = []
+    with open('output', 'w') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerows(time_tracking_row)
+
+
+if __name__ == '__main__':
+    start_date_time = datetime.strptime(input('Start Date (Format dd.mm.YYYY): '), '%d.%m.%Y')
+    end_date_time = datetime.strptime(input('End Date (Format dd.mm.YYYY): '), '%d.%m.%Y')
+    weekly_hours = float(input('Weekly Hours (zb. 38.5): '))
+    ap_ = input('Default Arbeitsparket (zb. AP 3): ')
+    git_logs = input('Git Log Folder (Press Enter to skip): ')
+    export_to_aws = input('Export also to AWS Timesheet (y/n): ')
+    load_allg_feiertage()
+    if git_logs != '':
+        prepare_logs()
+    read_time_sheet()
+    validate_export(git_logs != '')
+    if export_to_aws != 'n' and export_to_aws != '':
+        export_to_aws_csv()
     exit(0)
