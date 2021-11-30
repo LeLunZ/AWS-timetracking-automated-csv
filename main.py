@@ -37,7 +37,7 @@ def load_allg_feiertage():
     years = set([start_date_time.date().year + i for i in range(end_date_time.date().year - start_date_time.date().year + 1)])
 
     global allg_feiertage
-    feier_f = Path('feiertage.pickle')
+    feier_f = Path('data/feiertage.pickle')
     if feier_f.is_file():
         with open(feier_f, 'rb') as f:
             allg_feiertage = pickle.load(f)
@@ -45,7 +45,7 @@ def load_allg_feiertage():
         if all(x in distinct_years for x in years):
             return
 
-    driver = webdriver.Chrome('./chromedriver')
+    driver = webdriver.Chrome('data/chromedriver')
     for year in years:
         driver.get('https://www.timeanddate.de/feiertage/oesterreich/' + str(year))
         WebDriverWait(driver, 7).until(EC.presence_of_element_located((By.XPATH, '//*/tbody')))
