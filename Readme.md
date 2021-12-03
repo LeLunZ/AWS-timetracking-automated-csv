@@ -28,12 +28,14 @@ If you don't know which WorkPackage/"Arbeitspaket" is you main one. Please ask.
 
 If you worked with Git Repos, you can add all the git logs as your Remark/summary.
 Create an empty folder and put all your git log files in there.
-To get the files run this, in every git repo you have worked in: 
+To get the log files run this for every git repo you have worked in: 
 
-`git log --all --pretty=format:'%ai,%s' --author=GitName > log.csv`
-(instead of GitName use your Git username)
+`./gitlog.sh <pathToGitRepo>`
+if you don't input a path it will use the current directory.
+As output you get a file named something like log_export_*.csv. 
+Move all of them into a single folder. 
 
-Now move all log.csv into one folder. And specify the folder while the program is running:
+Specify the folder while the program is running:
 
 ![](./img/Screen%20Shot%202021-11-30%20at%2015.40.42.png)
 
