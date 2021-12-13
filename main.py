@@ -302,7 +302,7 @@ def validate_export(use_git_logs):
                         take.day = export_date
                         all_exports.append(take)
                         work_hours += take.work_hours
-                    else:
+                    elif generate_working_hours.strip() != 'n':
                         day = ExportDay(export_date)
                         if daily_hours == 7.75:
                             begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
@@ -550,6 +550,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     start_date_time = datetime.strptime(input('Start Date (Format dd.mm.YYYY): '), '%d.%m.%Y')
     end_date_time = datetime.strptime(input('End Date (Format dd.mm.YYYY): '), '%d.%m.%Y')
+    generate_working_hours = input('Do you want to generate working hours (please use if you didn\'t use attendancebot much). (y/n): ')
     part_time = input('Do you work part time. (y/n)')
     if part_time == 'y':
         weekly_hours = float(input('Weekly Hours (zb. 23.5): '))
@@ -563,10 +564,11 @@ if __name__ == '__main__':
         daily_hours = 7.75
         with_break = True
     ap_ = input('Default Arbeitsparket (zb. AP 3): ')
-    git_logs = Path(input('Git Log Folder (Press Enter to skip): ').strip())
+    git_logs = input('Git Log Folder (Press Enter to skip): ').strip()
     export_to_aws = input('Export also to AWS Timesheet (y/n): ')
     load_allg_feiertage()
     if git_logs != '':
+        git_logs = Path(git_logs)
         prepare_logs()
     read_time_sheet()
     validate_export(git_logs != '')
