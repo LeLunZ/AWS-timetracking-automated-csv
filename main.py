@@ -370,7 +370,7 @@ def validate_and_export(use_git_logs):
 
 
 if __name__ == '__main__':
-    work_hours_per_day = [8, 8, 8, 8, 6, 0, 0]
+    work_hours_per_day = [8.25, 8, 8.25, 8, 6, 0, 0]
     parser = argparse.ArgumentParser(description='AWS Tool', usage='main.py [-options] {Utility}')
     parser.add_argument('--aws',
                         help='Path to old aws-csv copy')
