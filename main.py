@@ -1,110 +1,20 @@
 import json
-import pickle
 import random
-import time
-
 import argparse
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Set, Dict
+from typing import List
 
 import csv
 from datetime import datetime, timedelta
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.wait import WebDriverWait
 from xlsxwriter import Workbook
 
-allg_feiertage = []
+from awsexport import export_to_aws_csv
+from classes import Logs, ExportTime, ExportDay
+from feiertage import load_allg_feiertage, allg_feiertage
 
-months = {
-    'Jan': 1,
-    'Feb': 2,
-    'Mär': 3,
-    'Apr': 4,
-    'Mai': 5,
-    'Jun': 6,
-    'Jul': 7,
-    'Aug': 8,
-    'Sep': 9,
-    'Okt': 10,
-    'Nov': 11,
-    'Dez': 12
-}
-
-
-def load_allg_feiertage():
-    years = set(
-        [start_date_time.date().year + i for i in range(end_date_time.date().year - start_date_time.date().year + 1)])
-
-    global allg_feiertage
-    feier_f = Path('data/feiertage.pickle')
-    if feier_f.is_file():
-        with open(feier_f, 'rb') as f:
-            allg_feiertage = pickle.load(f)
-        distinct_years = set([f.year for f in allg_feiertage])
-        if all(x in distinct_years for x in years):
-            return
-
-    driver = webdriver.Chrome('../aptc/chromedriver')
-    for year in years:
-        driver.get('https://www.timeanddate.de/feiertage/oesterreich/' + str(year))
-        WebDriverWait(driver, 7).until(EC.presence_of_element_located((By.XPATH, '//*/tbody')))
-        try:
-            cookie_ok = driver.find_element(By.XPATH,
-                                            "//*/button[contains(@class, 'fc-button') and contains(@class, 'fc-cta-consent') and contains(@class,'fc-primary-button')]")
-
-            cookie_ok.click()
-        except EC.NoSuchElementException:
-            pass
-        elements = driver.find_elements(By.XPATH, "//*/tbody/tr[@class='showrow']/th")
-
-        for f in elements:
-            f_split = f.text.split(' ')
-            day = int(f_split[0].replace('.', ''))
-            month = f_split[1]
-            year = year
-            allg_feiertage.append(datetime(year, months[month], day).date())
-    with open(feier_f, 'wb') as f:
-        pickle.dump(allg_feiertage, f)
-    driver.quit()
-
-
-@dataclass
-class ExportTime:
-    in_time: datetime
-    out_time: datetime
-    remark: str
-    is_generated: bool = False
-    ap: str = None
-
-
-class ExportDay:
-    def __init__(self, day):
-        self.times = []
-        self.day: datetime = day
-        self.work_hours = 0  # in seconds
-        self.valid: bool = True
-        self.validation_str = []
-
-    def add_times(self, e_time: ExportTime):
-        self.times.append(e_time)
-
-        self.work_hours += (e_time.out_time - e_time.in_time).total_seconds()
-
-    def add_validation(self, text):
-        self.valid = False
-        self.validation_str.append(text)
-
-
-@dataclass
-class Logs:
-    date: datetime
-    remarks: str
-
+days = ['MO', 'DI', 'MI', 'DO', 'FR', 'SA', 'SO']
 
 def convert_git_time(git_time):
     try:
@@ -166,18 +76,17 @@ def remove_export_time(day):
     return export_days.pop(day, None)
 
 
-@dataclass
-class WorkTimes:
-    begin: List = field(default_factory=lambda: [])
-    end: List = field(default_factory=lambda: [])
-
-
 def read_old_aws_sheet():
+    """
+    Reads an old aws csv file.
+    Use if you need to take dates from the old sheet into a new sheet.
+    :return:
+    """
     csv_name = Path(str(args.aws).strip())
     min_ = datetime.max
     max_ = datetime.min
     with open(csv_name, 'r') as csv_f:
-        csv_time_sheet = csv.reader(csv_f,delimiter=';', quotechar='"', skipinitialspace=True)
+        csv_time_sheet = csv.reader(csv_f, delimiter=';', quotechar='"', skipinitialspace=True)
         # 01.09.20;11;:00;13;:15;2:15;2,25;AP 3;Working from Home: Rewriting the AuthService because it needs to be done., added new stop in location loading
         for line in csv_time_sheet:
             if len(line) == 0:
@@ -197,6 +106,10 @@ def read_old_aws_sheet():
 
 
 def read_time_sheet():
+    """
+    Reads an attendance bot exported csv
+    :return:
+    """
     global user
     time_sheet_file = Path(input('Timesheet: ').strip())
     time_sheet_data = []
@@ -250,13 +163,65 @@ def read_time_sheet():
     return time_sheet_data
 
 
-def validate_export(use_git_logs):
-    days = ['MO', 'DI', 'MI', 'DO', 'FR', 'SA', 'SO']
+def check_workhours(export):
+    if export.work_hours > 10 * 60 * 60:
+        export.valid = False
+        export.add_validation(f'Too Many Work Hours {export.work_hours / 60 / 60:.2f}. Max: 10')
+    return export.valid
 
+
+def generate_randomhours(day, export_date):
+    randy_hour = random.randint(7, 9)
+    randy_min = random.randint(0, 3) * 15
+
+    if work_hours_per_day[export_date.weekday()] > 6 or (work_hours_per_day[export_date.weekday()] > 5 and randy_hour >= 8 and randy_min >= 2):
+        food = 13
+        randy_food = random.randint(-2, 3) * 15
+        if randy_food < 0:
+            food = 12
+            randy_food = abs(randy_food)
+
+        begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
+                         hour=randy_hour,
+                         minute=randy_min)
+        end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=food,
+                       minute=randy_food)
+        day.add_times(ExportTime(begin, end, '', True))
+        missing_time = day.time_diff(work_hours_per_day[export_date.weekday()])
+        randy_pause = random.randint(2, 5)
+        end_of_pause_in_seconds = randy_hour * 60 * 60 + randy_min * 60 + day.work_hours + randy_pause * 60
+        hours, minute = divmod(end_of_pause_in_seconds / 60, 60)
+        end_hours, end_minute = divmod(end_of_pause_in_seconds + missing_time, 60)
+        begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
+                         hour=hours,
+                         minute=minute)
+        end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=end_hours,
+                       minute=end_minute)
+        day.add_times(ExportTime(begin, end, '', True))
+    else:
+        randy_hour = random.randint(7, 9)
+        randy_min = random.randint(0, 3) * 15
+        begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
+                         hour=randy_hour,
+                         minute=randy_min)
+
+        work_end_min = randy_min + int((work_hours_per_day[export_date.weekday()] - int(work_hours_per_day[export_date.weekday()])) * 60)
+        work_end_hour = randy_hour + int(work_hours_per_day[export_date.weekday()])
+        if work_end_min >= 60:
+            work_end_min = work_end_min - 60
+            work_end_hour = work_end_hour + 1
+        end = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
+                       hour=work_end_hour,
+                       minute=work_end_min)
+        day.add_times(ExportTime(begin, end, '', True))
+
+
+def validate_and_export(use_git_logs):
     week_end_date = (start_date_time + timedelta(days=6 - start_date_time.weekday())).date()
     week_start_date = start_date_time.date()
 
     all_exports = []
+    # Get old aws data and add it to the export
     if args.aws is not None:
         old_min, old_max = read_old_aws_sheet()
         for export_date in [old_min.date() + timedelta(days=x) for x in
@@ -265,6 +230,7 @@ def validate_export(use_git_logs):
             if export is not None:
                 all_exports.append(export)
     overdue = []
+    # if worked on sunday or on a holiday -> move it to overdue
     for export_date in [week_start_date + timedelta(days=x) for x in
                         range(1 + (end_date_time.date() - week_start_date).days)]:
         export = get_export_time(export_date)
@@ -275,87 +241,40 @@ def validate_export(use_git_logs):
                 overdue.append(exp)
     overdue.reverse()
 
+    # iterate till we are at the end date
     while week_end_date <= end_date_time.date() + timedelta(days=1):
         work_hours = 0
         added_work_hours = 0
         added_work = []
+        # iterate over week
         for export_date in [week_start_date + timedelta(days=x) for x in
                             range(1 + (week_end_date - week_start_date).days)]:
             export: ExportDay = get_export_time(export_date)
             if export is not None:
-                if export.work_hours > 10 * 60 * 60:
-                    export.valid = False
-                    export.add_validation(f'Too Many Work Hours {export.work_hours / 60 / 60}. Max: 10')
+                check_workhours(export)
                 work_hours += export.work_hours
                 all_exports.append(export)
                 if export_date.weekday() == 5:
-                    export.add_validation('Samstag?!')
+                    export.add_validation('Samstag?')
             else:
                 if export_date not in allg_feiertage and export_date.weekday() != 5 and export_date.weekday() != 6:
+                    # check if there are any more elements to use
                     found_elems = [o for o in overdue if abs((o.day - export_date).days) <= 7]
                     if len(found_elems) > 0:
                         take = found_elems[0]
                         overdue.remove(take)
-                        if take.work_hours > 10 * 60 * 60:
-                            take.valid = False
-                            take.add_validation(f'Too Many Work Hours {take.work_hours / 60 / 60}')
+                        check_workhours(take)
                         take.day = export_date
                         all_exports.append(take)
                         work_hours += take.work_hours
                     elif generate_working_hours.strip() != 'n':
                         day = ExportDay(export_date)
-                        if daily_hours == 7.75:
-                            begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                             hour=8,
-                                             minute=30)
-                            end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=12,
-                                           minute=00)
-                            day.add_times(ExportTime(begin, end, '', True))
-                            begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                             hour=12,
-                                             minute=30)
-                            end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=16,
-                                           minute=45)
-                            day.add_times(ExportTime(begin, end, '', True))
-                        else:
-                            if with_break:
-                                before_break_hours = int(daily_hours / 2)
-                                after_break_minutes = int((daily_hours - int(daily_hours)) * 60 + 30)
-                                begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                                 hour=12 - before_break_hours,
-                                                 minute=0)
-                                end = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                               hour=12,
-                                               minute=30)
-                                day.add_times(ExportTime(begin, end, '', True))
-                                begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                                 hour=12,
-                                                 minute=30)
-                                end = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                               hour=(12 + before_break_hours + 1) if after_break_minutes >= 60 else (
-                                                       12 + before_break_hours),
-                                               minute=(
-                                                       after_break_minutes - 60) if after_break_minutes >= 60 else after_break_minutes)
-                                day.add_times(ExportTime(begin, end, '', True))
-                            else:
-                                randy_min = random.randint(0, 3) * 15
-                                begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                                 hour=8,
-                                                 minute=randy_min)
-                                work_end_min = randy_min + int((daily_hours - int(daily_hours)) * 60)
-                                work_end_hour = 8 + int(daily_hours)
-                                if work_end_min >= 60:
-                                    work_end_min = work_end_min - 60
-                                    work_end_hour = work_end_hour + 1
-                                end = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                                               hour=work_end_hour,
-                                               minute=work_end_min)
-                                day.add_times(ExportTime(begin, end, '', True))
+                        generate_randomhours(day, export_date)
                         added_work_hours += day.work_hours
                         added_work.append(day)
         if work_hours > weekly_hours * 60 * 60:
             all_exports[-1].add_validation(
-                f'{work_hours / 60 / 60} hours worked in the week. {weekly_hours} should be done')
+                f'{work_hours / 60 / 60:.2f} hours worked in the week. {weekly_hours} should be done')
         if work_hours < weekly_hours * 60 * 60:
             while len(added_work) > 0 and (weekly_hours - work_hours / 60 / 60) > 1.5:
                 to_add = added_work.pop(0)
@@ -363,7 +282,7 @@ def validate_export(use_git_logs):
                 work_hours += to_add.work_hours
             all_exports.sort(key=lambda x: x.day)
             all_exports[-1].add_validation(
-                f'{work_hours / 60 / 60} hours worked in the week. {weekly_hours} should be done')
+                f'{work_hours / 60 / 60:.2f} hours worked in the week. {weekly_hours} should be done')
         week_start_date = week_end_date + timedelta(days=1)
         if week_end_date + timedelta(days=7) > end_date_time.date() and week_end_date != end_date_time.date():
             week_end_date = end_date_time.date()
@@ -402,12 +321,14 @@ def validate_export(use_git_logs):
                 export_len += 1
                 csv_writer.writerow(
                     [days[e_day.day.weekday()], e_day.day.strftime('%d.%m.%Y'), t.in_time.strftime('%H:%M'),
-                     t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60, ap_ if t.ap is None else t.ap, t.remark,
+                     t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60,
+                     ap_ if t.ap is None else t.ap, t.remark,
                      '*' if t.is_generated else '', ''])
             t: ExportTime = e_day.times[-1]
             export_len += 1
             csv_writer.writerow([days[e_day.day.weekday()], e_day.day.strftime('%d.%m.%Y'), t.in_time.strftime('%H:%M'),
-                                 t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60, ap_ if t.ap is None else t.ap,
+                                 t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60,
+                                 ap_ if t.ap is None else t.ap,
                                  t.remark, '*' if t.is_generated else ''] + (
                                     [''] if e_day.valid else e_day.validation_str))
         if len(overdue) != 0:
@@ -420,7 +341,8 @@ def validate_export(use_git_logs):
                 for t in e_day.times:
                     csv_writer.writerow(
                         [days[e_day.day.weekday()], e_day.day.strftime('%d.%m.%Y'), t.in_time.strftime('%H:%M'),
-                         t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60, ap_ if t.ap is None else t.ap,
+                         t.out_time.strftime('%H:%M'), (t.out_time - t.in_time).total_seconds() / 60 / 60,
+                         ap_ if t.ap is None else t.ap,
                          t.remark,
                          '*' if t.is_generated else '', ''])
     print(f'file exported to {f_name}')
@@ -436,7 +358,7 @@ def validate_export(use_git_logs):
             for c, col in enumerate(row):
                 if r > 0 and c == 1:
                     worksheet.write(r, c, col, date_format)
-                elif r > 0 and (c == 2 or c==3):
+                elif r > 0 and (c == 2 or c == 3):
                     worksheet.write(r, c, col, hour_minutes)
                 else:
                     worksheet.write(r, c, col, )
@@ -447,101 +369,8 @@ def validate_export(use_git_logs):
     return
 
 
-def export_to_aws_csv():
-    raise NotImplementedError('Dont use this method\nTODO implement conversion from all_logs to export strs')
-    from pynput.keyboard import Controller, Key
-
-    try:
-        from AppKit import NSWorkspace
-    except ImportError as e:
-        print('Please install PyObjC. pip3 install PyObjC')
-        exit(0)
-    cn = 1
-    keyboard = Controller()
-    activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
-    while 'Microsoft Excel' not in activeAppName:
-        keyboard.press(Key.cmd)
-        for i in range(0, cn):
-            keyboard.press(Key.tab)
-            time.sleep(.1)
-            keyboard.release(Key.tab)
-        keyboard.release(Key.cmd)
-        time.sleep(0.5)
-        activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
-        cn = cn + 1
-    from AppKit import NSPasteboard, NSStringPboardType
-
-    time.sleep(2)
-    moveUp = False
-    moveDown = False
-    while True:
-        keyboard.press(Key.cmd)
-        keyboard.press('c')
-        time.sleep(.1)
-        keyboard.release(Key.cmd)
-        keyboard.release('c')
-        pb = NSPasteboard.generalPasteboard()
-        pbstring = pb.stringForType_(NSStringPboardType)
-        if pbstring == '':
-            moveUp = True
-        if pbstring != '':
-            moveDown = True
-        if moveUp and moveDown:
-            break
-        if moveUp:
-            keyboard.press(Key.up)
-        if moveDown:
-            keyboard.press(Key.down)
-    if pbstring != '':
-        keyboard.press(Key.down)
-
-    moveLeft = False
-    moveRight = False
-    while True:
-        keyboard.press(Key.cmd)
-        keyboard.press('c')
-        time.sleep(.1)
-        keyboard.release(Key.cmd)
-        keyboard.release('c')
-        pb = NSPasteboard.generalPasteboard()
-        pbstring = pb.stringForType_(NSStringPboardType)
-        if pbstring == '':
-            moveLeft = True
-        if pbstring != '':
-            moveRight = True
-        if moveLeft and moveRight:
-            break
-        if moveLeft:
-            keyboard.press(Key.left)
-        if moveRight:
-            keyboard.press(Key.right)
-    if pbstring != '':
-        keyboard.press(Key.right)
-
-    export_strs = []  # TODO implement conversion from all_logs to export strs
-    for entries in all_logs:
-        activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
-        while activeAppName != 'Microsoft Excel':
-            time.sleep(2)
-            activeAppName = NSWorkspace.sharedWorkspace().activeApplication()['NSApplicationName']
-
-        for i in entries[:-1]:
-            keyboard.type(str(i))
-            keyboard.press(Key.tab)
-
-        remark = ','.join(entries[-1])
-        keyboard.type(remark)
-        keyboard.press(Key.tab)
-
-
-def export_to_csv():
-    time_tracking_row = []
-    with open('output', 'w') as csvfile:
-        csv_writer = csv.writer(csvfile)
-        csv_writer.writerows(time_tracking_row)
-
-
 if __name__ == '__main__':
+    work_hours_per_day = [8, 8, 8, 8, 6, 0, 0]
     parser = argparse.ArgumentParser(description='AWS Tool', usage='main.py [-options] {Utility}')
     parser.add_argument('--aws',
                         help='Path to old aws-csv copy')
@@ -550,28 +379,27 @@ if __name__ == '__main__':
     args = parser.parse_args()
     start_date_time = datetime.strptime(input('Start Date (Format dd.mm.YYYY): '), '%d.%m.%Y')
     end_date_time = datetime.strptime(input('End Date (Format dd.mm.YYYY): '), '%d.%m.%Y')
-    generate_working_hours = input('Do you want to generate working hours (please use if you didn\'t use attendancebot much). (y/n): ')
+    generate_working_hours = input(
+        'Do you want to generate working hours (please use if you didn\'t use attendancebot much). (y/n): ')
+    print("PLEASE REMOVE ALL DAYS YOU WERE SICK, AFTER GENERATING WORKHOURS!")
     part_time = input('Do you work part time. (y/n)')
     if part_time == 'y':
         weekly_hours = float(input('Weekly Hours (zb. 23.5): '))
-        daily_hours = float(input('Daily Hours (zb. 6.5): '))
-        if daily_hours < 6:
-            with_break = float(input('Do you do a lunch break? (or work all hours without lunch) (y/n): '))
-        else:
-            with_break = True
+        for count, x in enumerate(days):
+            work_hours_per_day[count] = float(input(f'How many hours are you working on {x}: '))
+        daily_hours = sum(work_hours_per_day)/len([x for x in work_hours_per_day if x != 0])
     else:
         weekly_hours = 38.5
         daily_hours = 7.75
-        with_break = True
     ap_ = input('Default Arbeitsparket (zb. AP 3): ')
     git_logs = input('Git Log Folder (Press Enter to skip): ').strip()
     export_to_aws = input('Export also to AWS Timesheet (y/n): ')
-    load_allg_feiertage()
+    load_allg_feiertage(start_date_time, end_date_time)
     if git_logs != '':
         git_logs = Path(git_logs)
         prepare_logs()
     read_time_sheet()
-    validate_export(git_logs != '')
+    validate_and_export(git_logs != '')
     if export_to_aws != 'n' and export_to_aws != '':
         export_to_aws_csv()
     exit(0)
