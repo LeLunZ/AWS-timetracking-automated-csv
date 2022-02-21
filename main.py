@@ -176,10 +176,10 @@ def generate_randomhours(day, export_date):
 
     if work_hours_per_day[export_date.weekday()] > 6 or (work_hours_per_day[export_date.weekday()] > 5 and randy_hour >= 8 and randy_min >= 2):
         food = 13
-        randy_food = random.randint(-2, 3) * 15
+        randy_food = random.randint(-4, 3) * 15
         if randy_food < 0:
             food = 12
-            randy_food = abs(randy_food)
+            randy_food = abs(randy_food)%60
 
         begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
                          hour=randy_hour,
