@@ -38,13 +38,13 @@ def load_allg_feiertage(start_date_time, end_date_time):
         if all(x in distinct_years for x in years):
             return
 
-    driver = webdriver.Chrome('../aptc/chromedriver')
+    driver = webdriver.Chrome('./chromedriver')
     for year in years:
         driver.get('https://www.timeanddate.de/feiertage/oesterreich/' + str(year))
         WebDriverWait(driver, 7).until(EC.presence_of_element_located((By.XPATH, '//*/tbody')))
         try:
             cookie_ok = driver.find_element(By.XPATH,
-                                            "//*/button[contains(@class, 'fc-button') and contains(@class, 'fc-cta-consent') and contains(@class,'fc-primary-button')]")
+                                            "//*/button[contains(@mode, 'primary') and contains(text(), 'ZUSTIMMEN')]")
 
             cookie_ok.click()
         except EC.NoSuchElementException:

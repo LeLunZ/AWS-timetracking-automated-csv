@@ -4,6 +4,8 @@
 Latest Version isn't tested and documentation isn't up to date. 
 Try it a few times before sending it out.
 
+Add Chromedriver.exe in this repository.
+
 ## Setup
 
 ```bash

@@ -1,4 +1,5 @@
 import json
+import math
 import random
 import argparse
 
@@ -179,7 +180,7 @@ def generate_randomhours(day, export_date):
         randy_food = random.randint(-4, 3) * 15
         if randy_food < 0:
             food = 12
-            randy_food = abs(randy_food)%60
+            randy_food = abs(randy_food) % 60
 
         begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
                          hour=randy_hour,
@@ -188,15 +189,15 @@ def generate_randomhours(day, export_date):
                        minute=randy_food)
         day.add_times(ExportTime(begin, end, '', True))
         missing_time = day.time_diff(work_hours_per_day[export_date.weekday()])
-        randy_pause = random.randint(2, 5)
+        randy_pause = random.randint(2, 5)*15
         end_of_pause_in_seconds = randy_hour * 60 * 60 + randy_min * 60 + day.work_hours + randy_pause * 60
         hours, minute = divmod(end_of_pause_in_seconds / 60, 60)
-        end_hours, end_minute = divmod(end_of_pause_in_seconds + missing_time, 60)
+        end_hours, end_minute = divmod((end_of_pause_in_seconds + missing_time)/60, 60)
         begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
-                         hour=hours,
-                         minute=minute)
-        end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=end_hours,
-                       minute=end_minute)
+                         hour=int(hours),
+                         minute=int(minute))
+        end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=int(end_hours),
+                       minute=math.ceil(end_minute))
         day.add_times(ExportTime(begin, end, '', True))
     else:
         randy_hour = random.randint(7, 9)
