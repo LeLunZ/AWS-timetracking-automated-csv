@@ -188,7 +188,7 @@ def generate_randomhours(day, export_date):
         end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=food,
                        minute=randy_food)
         day.add_times(ExportTime(begin, end, '', True))
-        missing_time = day.time_diff(work_hours_per_day[export_date.weekday()])
+        missing_time = day.time_diff(work_hours_per_day[export_date.weekday()]*60*60)
         randy_pause = random.randint(2, 5)*15
         end_of_pause_in_seconds = randy_hour * 60 * 60 + randy_min * 60 + day.work_hours + randy_pause * 60
         hours, minute = divmod(end_of_pause_in_seconds / 60, 60)
@@ -196,6 +196,8 @@ def generate_randomhours(day, export_date):
         begin = datetime(year=export_date.year, month=export_date.month, day=export_date.day,
                          hour=int(hours),
                          minute=int(minute))
+        if end_minute > 59:
+            end_minute = 0
         end = datetime(year=export_date.year, month=export_date.month, day=export_date.day, hour=int(end_hours),
                        minute=math.ceil(end_minute))
         day.add_times(ExportTime(begin, end, '', True))
@@ -282,8 +284,9 @@ def validate_and_export(use_git_logs):
                 all_exports.append(to_add)
                 work_hours += to_add.work_hours
             all_exports.sort(key=lambda x: x.day)
-            all_exports[-1].add_validation(
-                f'{work_hours / 60 / 60:.2f} hours worked in the week. {weekly_hours} should be done')
+            if len(all_exports) > 0 and ((work_hours < weekly_hours * 60 * 60) or work_hours > weekly_hours * 60 * 60):
+                all_exports[-1].add_validation(
+                    f'{work_hours / 60 / 60:.2f} hours worked in the week. {weekly_hours} should be done')
         week_start_date = week_end_date + timedelta(days=1)
         if week_end_date + timedelta(days=7) > end_date_time.date() and week_end_date != end_date_time.date():
             week_end_date = end_date_time.date()

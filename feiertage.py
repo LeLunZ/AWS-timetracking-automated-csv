@@ -40,7 +40,7 @@ def load_allg_feiertage(start_date_time, end_date_time):
 
     driver = webdriver.Chrome('./chromedriver')
     for year in years:
-        driver.get('https://www.timeanddate.de/feiertage/oesterreich/' + str(year))
+        driver.get('https://www.timeanddate.de/feiertage/oesterreich/' + str(year) + '?hol=1')
         WebDriverWait(driver, 7).until(EC.presence_of_element_located((By.XPATH, '//*/tbody')))
         try:
             cookie_ok = driver.find_element(By.XPATH,

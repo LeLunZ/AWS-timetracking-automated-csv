@@ -20,8 +20,8 @@ class ExportDay:
         self.valid: bool = True
         self.validation_str = []
 
-    def time_diff(self, time):
-        return self.work_hours - time
+    def time_diff(self, time_):
+        return time_ - self.work_hours
 
     def add_times(self, e_time: ExportTime):
         self.times.append(e_time)
